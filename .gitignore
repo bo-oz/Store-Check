@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets & runtime config  (contain Qdrant URLs / API keys — NEVER commit)
+# ─────────────────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+app_config.json
+
+# ─────────────────────────────────────────────────────────────────────────────
+# User data  (uploaded shelf photos, annotations, exported datasets)
+# ─────────────────────────────────────────────────────────────────────────────
+data/
+uploads/
+/tmp/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trained models & weights  (large binaries, regenerable)
+# ─────────────────────────────────────────────────────────────────────────────
+*.pt
+*.pth
+*.onnx
+weights/
+backend/models/*.pt
+backend/models/yolo_class_map.json
+
+# Ultralytics training run artifacts
+runs/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Notebooks (exploratory, may embed data / outputs)
+*.ipynb
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Node / frontend
+# ─────────────────────────────────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+dist/
+*.local
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Editor / OS
+# ─────────────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Claude Code workspace
+.claude/

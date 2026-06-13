@@ -1,0 +1,13 @@
+{
+  "connections": [
+    {
+      "name": "default",
+      "qdrant_url": "https://your-cluster-id.region.aws.cloud.qdrant.io",
+      "qdrant_key": "your-qdrant-api-key",
+      "qdrant_collection": "retail_shelf_analytics_dinov2",
+      "embed_dim": 384,
+      "dinov2_model": "vit_small_patch14_dinov2.lvd142m"
+    }
+  ],
+  "active_connection": "default"
+}
