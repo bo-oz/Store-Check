@@ -183,4 +183,4 @@ Vue 3 · Vite · FastAPI · Qdrant · DINOv2 (timm) · Ultralytics YOLO · OpenC
 
 ## License
 
-No license is set yet. Add one (e.g. MIT) before publishing if you want others to reuse the code.
+Released under the [MIT License](LICENSE).
