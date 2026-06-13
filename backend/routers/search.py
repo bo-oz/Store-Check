@@ -1,7 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
 
 from backend.runtime_config import get_active
+
+log = logging.getLogger("store_check")
 
 # This module hosts the shared Qdrant client + vote-aggregation helpers used by
 # the shelves and qdrant_ops routers. It no longer exposes any endpoints of its
@@ -9,11 +14,36 @@ from backend.runtime_config import get_active
 # Studio), but the router is kept registered for namespace stability.
 router = APIRouter(prefix="/api", tags=["search"])
 
-_qdrant_cache: dict = {}  # keyed by (url, key)
+_qdrant_cache: dict = {}      # client, keyed by (url, key)
+_ensured_collections: set = set()  # (url, collection) pairs already verified/created
 
 
-def get_qdrant() -> "tuple[QdrantClient, str]":
-    """Returns (client, collection_name) for the active connection."""
+def _ensure_collection(client: QdrantClient, collection: str, dim: int):
+    """Create the collection (cosine distance, given vector size) if missing.
+
+    Cached per (url, collection) so the existence check runs at most once per
+    process. Vector size comes from the connection's embedding dimension.
+    """
+    try:
+        if client.collection_exists(collection):
+            return
+        client.create_collection(
+            collection_name=collection,
+            vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+        )
+        log.info("Auto-created Qdrant collection '%s' (dim=%d, cosine)", collection, dim)
+    except Exception as exc:
+        # Don't hard-fail here — a race or a permissions issue should surface on
+        # the actual upsert/query with a clearer message.
+        log.warning("Could not ensure collection '%s': %s", collection, exc)
+
+
+def get_qdrant(ensure: bool = True) -> "tuple[QdrantClient, str]":
+    """Returns (client, collection_name) for the active connection.
+
+    When ensure=True (default) the target collection is created on first use if
+    it doesn't exist yet, sized to the connection's embedding dimension.
+    """
     conn = get_active()
     url, key = conn["qdrant_url"], conn["qdrant_key"]
     if not url or not key:
@@ -21,7 +51,16 @@ def get_qdrant() -> "tuple[QdrantClient, str]":
     cache_key = (url, key)
     if cache_key not in _qdrant_cache:
         _qdrant_cache[cache_key] = QdrantClient(url=url, api_key=key, timeout=30)
-    return _qdrant_cache[cache_key], conn["qdrant_collection"]
+    client = _qdrant_cache[cache_key]
+    collection = conn["qdrant_collection"]
+
+    if ensure:
+        ensure_key = (url, collection)
+        if ensure_key not in _ensured_collections:
+            _ensure_collection(client, collection, int(conn.get("embed_dim", 384)))
+            _ensured_collections.add(ensure_key)
+
+    return client, collection
 
 
 VOTE_N = 30          # internal query size — large enough that rare classes

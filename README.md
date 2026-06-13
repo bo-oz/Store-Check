@@ -120,19 +120,12 @@ Qdrant is configured **entirely from the app's Settings (⚙) tab** — there's 
 | **Name**             | Any label, e.g. `my-cluster`                                         |
 | **Qdrant URL**       | Your cluster URL (or `http://localhost:6333` for local Docker)      |
 | **API key**          | Your Qdrant API key (leave blank for a keyless local instance)      |
-| **Collection**       | The name of an **existing** Qdrant collection (see note below)      |
+| **Collection**       | Any name — it's created automatically if it doesn't exist yet       |
 | **Embedding model**  | DINOv2 size (see below); its vector dimension is set for you        |
 
 Connections are stored in `app_config.json` (gitignored — it holds your API key). You can add several and switch the active one at any time, which is handy for testing against different collections.
 
-> ⚠️ **You must create the Qdrant collection yourself first.** Store Check does **not** auto-create collections — it writes points to a collection it expects to exist. Create it with a vector size that matches your embedding model and **cosine** distance. For example, against a local instance:
-> ```bash
-> # 384 for DINOv2 small, 768 for base, 1024 for large
-> curl -X PUT http://localhost:6333/collections/retail_shelf_analytics_dinov2 \
->   -H 'Content-Type: application/json' \
->   -d '{"vectors": {"size": 384, "distance": "Cosine"}}'
-> ```
-> In Qdrant Cloud you can do the same from the dashboard's collections UI. **The vector size must equal the embedding model's dimension**, or writes will fail.
+> **The collection is created for you.** If the collection name you enter doesn't exist on the cluster yet, Store Check creates it on first use — sized to your chosen embedding model's dimension, with cosine distance. You don't need to pre-create anything in the Qdrant dashboard. (If a collection with that name *already* exists, it's used as-is and left untouched — just make sure its vector size matches your embedding model.)
 
 > **Don't have a Qdrant cluster yet?** Spin one up free at [cloud.qdrant.io](https://cloud.qdrant.io/), or run one locally:
 > ```bash
@@ -197,7 +190,6 @@ Ideas and directions for improvement — contributions welcome.
 - [ ] Store a stable product ID / EAN alongside the free-text name, so renames don't lose identity.
 
 **Detection & matching**
-- [ ] Auto-create the Qdrant collection on first connect (with the right dimension/distance) so setup is one less manual step.
 - [ ] Active-learning queue: surface the lowest-confidence detections first for review.
 - [ ] Use the colour/shape descriptors as a tie-breaker at match time, not just in the Label Manager.
 - [ ] Export a trained model + class map as a portable bundle for offline inference.
