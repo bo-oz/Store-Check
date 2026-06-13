@@ -14,9 +14,15 @@ The workflow is a loop: **annotate → curate → train → re-detect → repeat
 
 ### ✏️ Annotation Studio
 - Upload shelf photos; draw or auto-detect product bounding boxes on a zoom/pan canvas.
-- One click runs a detection model over the shelf and proposes boxes **with predicted labels and confidence**.
+- **Multiple detection models** to assist annotation, selectable per shelf:
+  - **Trained YOLO** — your own model, returns boxes *with predicted product labels*.
+  - **FastSAM** — segments every object on the shelf (no labels); great before you have a trained model.
+  - **YOLO-World** — open-vocabulary, text-prompted (e.g. `box, bottle, blister`).
+  - **Grounding DINO** — open-vocabulary, text-prompted, tuned for precise boxes.
+- One click runs the chosen model over the shelf and proposes boxes **with predicted labels and confidence** (where the model supports labels).
 - Each crop is embedded with **DINOv2** and matched against your Qdrant collection, so the label form pre-fills from the most similar products you've already tagged.
 - Adjustable model parameters (confidence, NMS IoU, image size, geometry filters) via an inline settings popover.
+- **Uploads are de-duplicated automatically.** Every shelf photo is content-addressed by its SHA-256 hash, so re-uploading the same image just reopens the existing one (with its annotations) instead of creating a duplicate.
 
 ### 🗂️ Collection & Label Manager
 - Browse every stored product crop and its payload.
@@ -49,7 +55,7 @@ The workflow is a loop: **annotate → curate → train → re-detect → repeat
 
 - **Frontend** — Vue 3 (`<script setup>`), Vite, Axios. No backend secrets ever reach the browser.
 - **Backend** — FastAPI. DINOv2 (via `timm`) for crop embeddings, Ultralytics for YOLO training/inference, OpenCV for image ops.
-- **Storage** — Qdrant holds vectors + product payloads. Shelf images are content-addressed (SHA-256) on local disk. Trained models live in a local archive.
+- **Storage** — Qdrant holds vectors + product payloads. Shelf images are saved to local disk under `data/shelf_images/`, **content-addressed by SHA-256** — identical uploads collapse to one file, so the same photo is never stored (or annotated) twice. Trained models live in a local archive.
 
 ---
 
@@ -114,10 +120,19 @@ Qdrant is configured **entirely from the app's Settings (⚙) tab** — there's 
 | **Name**             | Any label, e.g. `my-cluster`                                         |
 | **Qdrant URL**       | Your cluster URL (or `http://localhost:6333` for local Docker)      |
 | **API key**          | Your Qdrant API key (leave blank for a keyless local instance)      |
-| **Collection**       | Any name — it's created automatically on first write                |
+| **Collection**       | The name of an **existing** Qdrant collection (see note below)      |
 | **Embedding model**  | DINOv2 size (see below); its vector dimension is set for you        |
 
 Connections are stored in `app_config.json` (gitignored — it holds your API key). You can add several and switch the active one at any time, which is handy for testing against different collections.
+
+> ⚠️ **You must create the Qdrant collection yourself first.** Store Check does **not** auto-create collections — it writes points to a collection it expects to exist. Create it with a vector size that matches your embedding model and **cosine** distance. For example, against a local instance:
+> ```bash
+> # 384 for DINOv2 small, 768 for base, 1024 for large
+> curl -X PUT http://localhost:6333/collections/retail_shelf_analytics_dinov2 \
+>   -H 'Content-Type: application/json' \
+>   -d '{"vectors": {"size": 384, "distance": "Cosine"}}'
+> ```
+> In Qdrant Cloud you can do the same from the dashboard's collections UI. **The vector size must equal the embedding model's dimension**, or writes will fail.
 
 > **Don't have a Qdrant cluster yet?** Spin one up free at [cloud.qdrant.io](https://cloud.qdrant.io/), or run one locally:
 > ```bash
@@ -169,6 +184,37 @@ start.sh               # runs backend + frontend together
 - **Secrets never get committed.** `app_config.json` (holds your Qdrant API key) and `.env` are gitignored. Use `app_config.example.json` / `.env.example` as templates.
 - **Your data stays yours.** Uploaded shelf photos, exported datasets, and trained models live under `data/` and `runs/`, all gitignored. Nothing is sent anywhere except your own Qdrant instance.
 - If you ever committed a real key by accident, **rotate it** in the Qdrant dashboard — removing it from a later commit doesn't purge it from git history.
+
+---
+
+## Roadmap / To-do
+
+Ideas and directions for improvement — contributions welcome.
+
+**Data model**
+- [ ] **Dynamic payload schema.** Right now the product payload is a fixed set of fields (`product_name`, `pack_type`, `product_category`, `company_product`). Let users define their own schema — choose which fields exist and their types (text, number, boolean, enum/select, tags) — so the annotation form, the Collection browser, and batch-edit adapt automatically. This is the single most impactful change for using Store Check outside pharmacy.
+- [ ] Per-field validation and required-field rules.
+- [ ] Store a stable product ID / EAN alongside the free-text name, so renames don't lose identity.
+
+**Detection & matching**
+- [ ] Auto-create the Qdrant collection on first connect (with the right dimension/distance) so setup is one less manual step.
+- [ ] Active-learning queue: surface the lowest-confidence detections first for review.
+- [ ] Use the colour/shape descriptors as a tie-breaker at match time, not just in the Label Manager.
+- [ ] Export a trained model + class map as a portable bundle for offline inference.
+
+**Storage & scale**
+- [ ] S3-backed image store (the `LocalImageStore` interface already anticipates this — see `backend/services/image_store.py`).
+- [ ] Background job queue for training/export instead of an in-process thread.
+- [ ] Multi-user support with per-user annotation attribution.
+
+**UX**
+- [ ] Keyboard shortcuts for the annotation canvas (next box, confirm, reject).
+- [ ] Bulk image upload (folder / zip) with a progress view.
+- [ ] Higher-resolution crop inspection by re-cutting from the original shelf image on demand (currently limited to the stored crop's resolution).
+
+**Housekeeping**
+- [ ] Add automated tests (backend API + a few frontend component tests).
+- [ ] Dockerfile / docker-compose for one-command local setup.
 
 ---
 
