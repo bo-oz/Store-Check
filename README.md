@@ -74,8 +74,8 @@ The workflow is a loop: **annotate → curate → train → re-detect → repeat
 ### 1. Clone
 
 ```bash
-git clone <your-repo-url> store-check
-cd store-check
+git clone https://github.com/bo-oz/Store-Check.git
+cd Store-Check
 ```
 
 > **Qdrant config happens in the app, not in a config file** — see [Connecting to Qdrant](#connecting-to-qdrant) below. You can skip straight to installing the backend.
