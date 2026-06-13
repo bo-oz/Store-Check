@@ -2,32 +2,6 @@ import axios from 'axios'
 
 const http = axios.create({ baseURL: '/api' })
 
-export async function uploadImage(file) {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await http.post('/images/upload', form)
-  return data // { session_id, width, height }
-}
-
-export function imageUrl(sessionId) {
-  return `/api/images/${sessionId}/file`
-}
-
-export async function fetchModels() {
-  const { data } = await http.get('/models')
-  return data // { models, geometry_defaults }
-}
-
-export async function runSegmentation(payload) {
-  const { data } = await http.post('/segment', payload)
-  return data // { boxes, count }
-}
-
-export async function runSearch(payload) {
-  const { data } = await http.post('/search', payload)
-  return data // { results }
-}
-
 export async function addCrop(payload) {
   const { data } = await http.post('/qdrant/add', payload)
   return data // { point_id, product_name }

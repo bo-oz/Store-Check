@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import images, segment, search, qdrant_ops, config_router, detection, shelves
+from backend.routers import search, qdrant_ops, config_router, detection, shelves
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,8 +19,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(images.router)
-app.include_router(segment.router)
 app.include_router(search.router)
 app.include_router(qdrant_ops.router)
 app.include_router(config_router.router)

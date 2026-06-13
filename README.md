@@ -65,32 +65,16 @@ The workflow is a loop: **annotate → curate → train → re-detect → repeat
 
 ## Setup
 
-### 1. Clone and configure
+### 1. Clone
 
 ```bash
 git clone <your-repo-url> store-check
 cd store-check
-cp .env.example .env
 ```
 
-Edit `.env` with your Qdrant connection:
-
-```ini
-QDRANT_URL=https://your-cluster-id.region.aws.cloud.qdrant.io
-QDRANT_KEY=your-qdrant-api-key
-QDRANT_COLLECTION=retail_shelf_analytics_dinov2
-DINOV2_MODEL=vit_small_patch14_dinov2.lvd142m
-EMBED_DIM=384
-UPLOAD_DIR=/tmp/store_check_uploads
-```
-
-> **Don't have a Qdrant cluster yet?** Spin one up free at [cloud.qdrant.io](https://cloud.qdrant.io/), or run one locally:
-> ```bash
-> docker run -p 6333:6333 qdrant/qdrant
-> # then set QDRANT_URL=http://localhost:6333 and leave QDRANT_KEY empty
-> ```
-
-The collection is created automatically on first write — you don't need to pre-create it. Just make sure `EMBED_DIM` matches your chosen DINOv2 model (see table below).
+> **Qdrant config happens in the app, not in a config file** — see [Connecting to Qdrant](#connecting-to-qdrant) below. You can skip straight to installing the backend.
+>
+> Optionally, `cp .env.example .env` and set `QDRANT_URL` / `QDRANT_KEY` to pre-fill the first connection on first launch. This is just a convenience — everything is editable from the Settings tab afterwards.
 
 ### 2. Backend
 
@@ -121,22 +105,35 @@ This launches the FastAPI backend on `:8000` and the Vue dev server on `:5173`. 
 
 ---
 
-## Connecting to Qdrant in the app
+## Connecting to Qdrant
 
-You can manage connections two ways:
+Qdrant is configured **entirely from the app's Settings (⚙) tab** — there's no config file to hand-edit. On first launch, open Settings and add a connection:
 
-1. **`.env`** — the default connection, loaded on startup.
-2. **Settings tab** — add/switch between multiple named connections at runtime (stored in `app_config.json`, which is gitignored). Useful for testing against different collections or embedding dimensions.
+| Field                | What to enter                                                        |
+|----------------------|---------------------------------------------------------------------|
+| **Name**             | Any label, e.g. `my-cluster`                                         |
+| **Qdrant URL**       | Your cluster URL (or `http://localhost:6333` for local Docker)      |
+| **API key**          | Your Qdrant API key (leave blank for a keyless local instance)      |
+| **Collection**       | Any name — it's created automatically on first write                |
+| **Embedding model**  | DINOv2 size (see below); its vector dimension is set for you        |
+
+Connections are stored in `app_config.json` (gitignored — it holds your API key). You can add several and switch the active one at any time, which is handy for testing against different collections.
+
+> **Don't have a Qdrant cluster yet?** Spin one up free at [cloud.qdrant.io](https://cloud.qdrant.io/), or run one locally:
+> ```bash
+> docker run -p 6333:6333 qdrant/qdrant
+> # then use URL http://localhost:6333 with a blank API key
+> ```
 
 ### Choosing an embedding model
 
 The DINOv2 model determines your vector dimension. **Pick one before you start tagging** — changing it later means re-embedding everything.
 
-| Model (timm key)                          | Dim  | Notes                          |
-|-------------------------------------------|------|--------------------------------|
-| `vit_small_patch14_dinov2.lvd142m`        | 384  | Fastest, lowest memory         |
-| `vit_base_patch14_dinov2.lvd142m`         | 768  | Balanced                       |
-| `vit_large_patch14_dinov2.lvd142m`        | 1024 | Most accurate, slowest         |
+| Model                | Dim  | Notes                          |
+|----------------------|------|--------------------------------|
+| DINOv2 small         | 384  | Fastest, lowest memory         |
+| DINOv2 base          | 768  | Balanced                       |
+| DINOv2 large         | 1024 | Most accurate, slowest         |
 
 ---
 
@@ -154,16 +151,14 @@ The DINOv2 model determines your vector dimension. **Pick one before you start t
 
 ```
 backend/
-  config.py            # .env-backed settings
-  runtime_config.py    # multi-connection config (app_config.json)
-  routers/             # FastAPI endpoints (shelves, qdrant_ops, detection, search…)
+  config.py            # disk paths + first-run Qdrant seed
+  runtime_config.py    # multi-connection config (app_config.json) — the live source of truth
+  routers/             # FastAPI endpoints: shelves, qdrant_ops, detection, config, search (helpers)
   services/            # image store, YOLO export & inference
   ml/                  # DINOv2 + detection model loaders
 frontend/
-  src/components/      # Vue views: AnnotateView, LabelManager, LabelDetail, TrainView…
+  src/components/      # Vue views: AnnotateView, QdrantBrowser, LabelManager, LabelDetail, TrainView, SettingsView
   src/api.js           # Axios client
-scripts/
-  train_yolov8.py      # standalone training script
 start.sh               # runs backend + frontend together
 ```
 
@@ -171,7 +166,7 @@ start.sh               # runs backend + frontend together
 
 ## Security & privacy notes
 
-- **Secrets never get committed.** `.env` and `app_config.json` (both contain your Qdrant API key) are gitignored. Use `.env.example` / `app_config.example.json` as templates.
+- **Secrets never get committed.** `app_config.json` (holds your Qdrant API key) and `.env` are gitignored. Use `app_config.example.json` / `.env.example` as templates.
 - **Your data stays yours.** Uploaded shelf photos, exported datasets, and trained models live under `data/` and `runs/`, all gitignored. Nothing is sent anywhere except your own Qdrant instance.
 - If you ever committed a real key by accident, **rotate it** in the Qdrant dashboard — removing it from a later commit doesn't purge it from git history.
 
