@@ -170,6 +170,11 @@ frontend/
 start.sh               # runs backend + frontend together
 ```
 
+For deeper documentation of each half, see the
+**[backend README](backend/README.md)** (architecture, module reference, full
+API endpoint list) and the **[frontend README](frontend/README.md)** (views,
+`api.js`, conventions).
+
 ---
 
 ## Security & privacy notes
