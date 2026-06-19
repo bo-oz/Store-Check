@@ -4,7 +4,9 @@ set -e
 cd "$(dirname "$0")"
 
 echo "▶ Starting FastAPI backend on :8000"
-(cd backend && uvicorn main:app --reload --host 127.0.0.1 --port 8000) &
+# Run from the project root so the `from backend.…` imports resolve, and via
+# `python3 -m uvicorn` so it works even when the `uvicorn` script isn't on PATH.
+python3 -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000 &
 BACKEND_PID=$!
 
 echo "▶ Starting Vue dev server on :5173"
