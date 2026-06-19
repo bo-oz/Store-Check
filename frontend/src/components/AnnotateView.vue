@@ -93,6 +93,17 @@
                   <input v-model.number="advParams.minAspect" type="number" min="0.05" max="0.9" step="0.05" />
                 </div>
               </template>
+              <template v-if="isTrainedYolo">
+                <div class="adv-sep"></div>
+                <div class="adv-row">
+                  <label title="Detections with a real product label at or above this confidence can be auto-approved (the generic 'medicine package' class is never auto-approved)">Auto-approve ≥</label>
+                  <input v-model.number="autoApproveThreshold" type="number" min="0.5" max="0.99" step="0.01" />
+                </div>
+                <label class="adv-toggle" title="Approve high-confidence detections automatically on every run, instead of with the button">
+                  <input type="checkbox" v-model="autoApproveOnDetect" />
+                  Auto-approve on detect
+                </label>
+              </template>
               <button class="btn-adv-reset" @click="resetAdvParams">Reset to defaults</button>
             </div>
           </div>
@@ -102,6 +113,12 @@
                 @click="runDetection">
           <span v-if="detecting" class="mini-spin" />
           <span v-else>▶ Run</span>
+        </button>
+        <button v-if="autoApprovableCount > 0" class="btn-auto-approve"
+                :disabled="autoApproving" @click="autoApproveHighConfidence"
+                :title="`Confirm all detections with a real product label at ≥ ${Math.round(autoApproveThreshold*100)}% confidence`">
+          <span v-if="autoApproving" class="mini-spin" />
+          <span v-else>✓ Approve {{ autoApprovableCount }} ≥{{ Math.round(autoApproveThreshold*100) }}%</span>
         </button>
         <span v-if="pendingBoxes.length" class="detect-dismiss-all" @click="dismissAllPending">
           Dismiss all ({{ pendingBoxes.length }})
@@ -127,13 +144,20 @@
 
             <!-- ── Existing boxes: visuals only (hit areas rendered after pending, so they stay on top) ── -->
             <g v-for="box in boxes" :key="box.id">
+              <rect v-if="isHl(box.id)"
+                :x="liveBox(box)[0]" :y="liveBox(box)[1]"
+                :width="liveBox(box)[2]-liveBox(box)[0]"
+                :height="liveBox(box)[3]-liveBox(box)[1]"
+                :fill="hue(box.label)" opacity=".28"
+                style="pointer-events:none"
+              />
               <rect
                 :x="liveBox(box)[0]" :y="liveBox(box)[1]"
                 :width="liveBox(box)[2]-liveBox(box)[0]"
                 :height="liveBox(box)[3]-liveBox(box)[1]"
                 fill="transparent"
                 :stroke="hue(box.label)"
-                :stroke-width="selectedBox?.id === box.id ? boxSW * 1.25 : boxSW"
+                :stroke-width="isHl(box.id) ? boxSW * 2.4 : (selectedBox?.id === box.id ? boxSW * 1.25 : boxSW)"
                 :stroke-dasharray="selectedBox?.id === box.id ? `${6*invZ} ${3*invZ}` : 'none'"
                 style="pointer-events:none"
               />
@@ -325,8 +349,8 @@
         </div>
       </template>
 
-      <template v-else-if="pendingCoords !== null || selectedBox">
-        <h3>{{ pendingCoords !== null ? 'New annotation' : 'Edit annotation' }}</h3>
+      <template v-else-if="pendingCoords !== null">
+        <h3>New annotation</h3>
 
         <!-- For new manual boxes: show crop + Qdrant match side by side -->
         <template v-if="pendingCoords !== null">
@@ -407,16 +431,60 @@
       </template>
 
       <template v-else>
-        <h3>Annotations <span class="count-badge">{{ boxes.length }}</span></h3>
+        <!-- Edit block — shown above the list so annotations stay visible -->
+        <div v-if="selectedBox" class="edit-block">
+          <div class="edit-block-head">
+            <h3>Edit annotation</h3>
+            <button class="btn-close-edit" @click="cancelEdit" title="Close">✕</button>
+          </div>
+          <canvas ref="cropCanvas" class="crop-preview" width="210" height="118" />
+          <label class="field-lbl">Product name *</label>
+          <input ref="labelInput" v-model="form.product_name"
+                 list="lbl-sugg-edit" class="field-inp"
+                 placeholder="Start typing…" @keydown.enter="saveBox" />
+          <datalist id="lbl-sugg-edit">
+            <option v-for="l in knownLabels" :key="l" :value="l" />
+          </datalist>
+          <div class="edit-fields-row">
+            <input v-model="form.pack_type" class="field-inp" placeholder="Pack type" />
+            <input v-model="form.product_category" class="field-inp" placeholder="Category" />
+          </div>
+          <label class="field-check">
+            <input type="checkbox" v-model="form.company_product" /> Company product
+          </label>
+          <div v-if="saveError" class="save-err">{{ saveError }}</div>
+          <div class="panel-actions">
+            <button class="btn-save" :disabled="saving || !form.product_name.trim()" @click="saveBox">
+              {{ saving ? 'Saving…' : 'Update' }}
+            </button>
+            <button class="btn-delete" @click="deleteBox">Delete</button>
+          </div>
+          <p class="resize-hint">Drag handles on the image to resize, then Update.</p>
+        </div>
+
+        <h3 class="anno-title">Annotations <span class="count-badge">{{ boxes.length }}</span></h3>
         <div v-if="!activeShelf" class="panel-empty">Select a shelf image</div>
         <div v-else-if="loadingAnno" class="panel-empty">Loading…</div>
         <div v-else-if="!boxes.length" class="panel-empty">Draw boxes on the image to start</div>
-        <div v-else class="box-list">
-          <div v-for="box in boxes" :key="box.id"
-               class="box-row" :class="{ active: selectedBox?.id === box.id }"
-               @click="selectBoxById(box)">
-            <span class="box-swatch" :style="{ background: hue(box.label) }" />
-            <span class="box-lbl">{{ box.label }}</span>
+        <div v-else class="group-list">
+          <div v-for="g in groupedBoxes" :key="g.label" class="group">
+            <div class="group-head" :class="{ open: expandedGroups.has(g.label) }"
+                 @click="toggleGroup(g.label)"
+                 @mouseenter="hoverGroup(g.label)" @mouseleave="clearHover">
+              <span class="group-caret">{{ expandedGroups.has(g.label) ? '▾' : '▸' }}</span>
+              <span class="box-swatch" :style="{ background: hue(g.label) }" />
+              <span class="group-lbl">{{ g.label }}</span>
+              <span class="group-count">{{ g.count }}</span>
+            </div>
+            <div v-if="expandedGroups.has(g.label)" class="group-items">
+              <div v-for="(box, i) in g.items" :key="box.id"
+                   class="item-row" :class="{ active: selectedBox?.id === box.id }"
+                   @click="selectBoxById(box)"
+                   @mouseenter="hoverItem(box)" @mouseleave="clearHover">
+                <span class="item-idx">#{{ i + 1 }}</span>
+                <span class="item-meta">{{ box.pack_type || box.product_category || '—' }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -500,6 +568,67 @@ const needsPrompt = computed(() =>
 const isSegModel = computed(() =>
   ['fastsam', 'yoloworld', 'groundingdino'].includes(activeModelMeta.value.type)
 )
+// Trained YOLO is the only model that returns per-box product labels + confidence,
+// so it's the only one auto-approval applies to.
+const isTrainedYolo = computed(() =>
+  selectedModel.value !== 'manual' && !isSegModel.value
+)
+
+// Generic fallback classes carry no product identity — never auto-approve these;
+// they go to the manual queue to be identified via Qdrant.
+const GENERIC_LABELS = ['medicine package', 'custom medicine package']
+function isGenericLabel(lbl) {
+  return GENERIC_LABELS.includes(String(lbl || '').trim().toLowerCase())
+}
+
+// ── Auto-approve high-confidence detections ──────────────────────────────────
+const autoApproveThreshold = ref(0.85)
+const autoApproveOnDetect  = ref(false)
+const autoApproving        = ref(false)
+
+function isAutoApprovable(p) {
+  return !!p.label && !isGenericLabel(p.label) && p.confidence >= autoApproveThreshold.value
+}
+const autoApprovableCount = computed(() => pendingBoxes.value.filter(isAutoApprovable).length)
+
+async function autoApproveHighConfidence() {
+  if (autoApproving.value || !activeShelf.value) return
+  const targets = pendingBoxes.value.filter(isAutoApprovable)
+  if (!targets.length) return
+  autoApproving.value = true
+  let approved = 0
+  for (const p of targets) {
+    const coords = [p.x1, p.y1, p.x2, p.y2]
+    try {
+      const result = await addCrop({
+        session_id:       activeShelf.value.shelf_id,
+        box:              coords,
+        product_name:     p.label,
+        pack_type:        '',
+        product_category: '',
+        company_product:  true,
+        shelf_id:         activeShelf.value.shelf_id,
+        shelf_box:        coords,
+        shelf_w:          imgW.value,
+        shelf_h:          imgH.value,
+      })
+      boxes.value.push({
+        id: result.point_id, label: p.label, box: coords,
+        pack_type: '', product_category: '', company_product: true,
+      })
+      if (!knownLabels.value.includes(p.label))
+        knownLabels.value = [...knownLabels.value, p.label].sort()
+      pendingBoxes.value = pendingBoxes.value.filter(b => b._pid !== p._pid)
+      if (selectedPending.value?._pid === p._pid) selectedPending.value = null
+      approved++
+    } catch { /* leave failed ones in the queue */ }
+  }
+  const s = shelves.value.find(s => s.shelf_id === activeShelf.value.shelf_id)
+  if (s) s.box_count = boxes.value.length
+  autoApproving.value = false
+  const left = pendingBoxes.value.length
+  detectStatus.value = `Auto-approved ${approved} · ${left} left to review`
+}
 
 // ── Advanced model parameters (gear popover) ─────────────────────────────────
 const ADV_DEFAULTS = { iou: 0.5, dedupeIou: 0.4, imgsz: 1024, minArea: 1500, maxAreaRatio: 0.12, minAspect: 0.20 }
@@ -543,6 +672,36 @@ const pendingCoords = ref(null)   // [x1,y1,x2,y2] – new box before label
 
 const form = ref({ product_name: '', pack_type: '', product_category: '', company_product: true })
 
+// ── Grouped annotations panel (folder view) ──────────────────────────────────
+const groupedBoxes = computed(() => {
+  const m = new Map()
+  for (const b of boxes.value) {
+    if (!m.has(b.label)) m.set(b.label, [])
+    m.get(b.label).push(b)
+  }
+  return [...m.entries()]
+    .map(([label, items]) => ({ label, items, count: items.length }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+})
+
+const expandedGroups = ref(new Set())
+function toggleGroup(label) {
+  const s = new Set(expandedGroups.value)
+  s.has(label) ? s.delete(label) : s.add(label)
+  expandedGroups.value = s
+}
+
+// Boxes to "light up" on the canvas while hovering a group or item.
+const hoverHighlightIds = ref(new Set())
+function isHl(id) { return hoverHighlightIds.value.has(id) }
+function hoverGroup(label) {
+  hoverHighlightIds.value = new Set(
+    boxes.value.filter(b => b.label === label).map(b => b.id)
+  )
+}
+function hoverItem(box) { hoverHighlightIds.value = new Set([box.id]) }
+function clearHover() { hoverHighlightIds.value = new Set() }
+
 // ── Computed ──────────────────────────────────────────────────────────────────
 const contentStyle = computed(() => ({
   position: 'absolute',
@@ -573,6 +732,8 @@ const drawSW    = computed(() => 1.5 * invZ.value)   // drawing preview stroke-w
 // Chip width in image-space for a given label string
 function chipW(label) { return Math.max(60, (label || '').length * 6.8 + 12) * invZ.value }
 function pendingChipText(p) {
+  if (isGenericLabel(p.label))
+    return p.confidence > 0 ? `❓ ${Math.round(p.confidence * 100)}%` : '❓ identify'
   const lbl = p.label || '?'
   return p.confidence > 0 ? `${lbl}  ${Math.round(p.confidence * 100)}%` : lbl
 }
@@ -716,7 +877,13 @@ async function runDetection() {
         (totalSkipped ? ` · ${totalSkipped} already annotated` : '')
     }
 
-    // Kick off DINOv2 matching for all candidates in parallel (background)
+    // Optionally auto-approve high-confidence labelled detections up front,
+    // leaving only the lower-confidence / generic-class boxes in the queue.
+    if (autoApproveOnDetect.value && isTrainedYolo.value) {
+      await autoApproveHighConfidence()
+    }
+
+    // Kick off DINOv2 matching for all remaining candidates in parallel (background)
     const shelfId = activeShelf.value.shelf_id
     pendingBoxes.value.forEach(p => {
       matchCrop(shelfId, [p.x1, p.y1, p.x2, p.y2])
@@ -762,7 +929,10 @@ function selectPending(p) {
   pendingCoords.value   = null
   drawRect.value        = null
 
-  form.value = { product_name: p.label || '', pack_type: '', product_category: '', company_product: true }
+  // Generic-class boxes carry no real product name — start blank and let the
+  // Qdrant match fill it in (the pack is likely already in the collection).
+  const seedName = isGenericLabel(p.label) ? '' : (p.label || '')
+  form.value = { product_name: seedName, pack_type: '', product_category: '', company_product: true }
   if (p.match) _applyMatch(p)
 
   nextTick(() => {
@@ -1295,6 +1465,17 @@ async function deleteBox() {
   border: 1px solid #2a2e3f; border-radius: 5px; cursor: pointer; font-size: .72rem;
 }
 .btn-adv-reset:hover { color: #ccc; }
+.adv-sep { height: 1px; background: #2a2e3f; margin: .15rem 0; }
+.adv-toggle { display: flex; align-items: center; gap: .4rem; font-size: .75rem; color: #999; cursor: pointer; }
+.adv-toggle input { accent-color: #5c6bc0; }
+
+.btn-auto-approve {
+  font-size: .75rem; padding: .22rem .6rem; background: #1f3a52; color: #7fc3ff;
+  border: 1px solid #2f5a82; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; gap: .3rem; white-space: nowrap;
+}
+.btn-auto-approve:hover:not(:disabled) { background: #29547a; }
+.btn-auto-approve:disabled { opacity: .5; cursor: not-allowed; }
 
 .btn-detect { font-size: .75rem; padding: .22rem .6rem; background: #2e5e2e; color: #8bc88b; border: 1px solid #3a6e3a; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: .3rem; }
 .btn-detect:hover:not(:disabled) { background: #3a7a3a; }
@@ -1329,11 +1510,38 @@ async function deleteBox() {
 .resize-hint { font-size: .72rem; color: #555; margin: 0; }
 .panel-empty { color: #555; font-size: .8rem; }
 
-.box-list { display: flex; flex-direction: column; gap: .25rem; }
-.box-row { display: flex; align-items: center; gap: .45rem; padding: .32rem .45rem; border-radius: 6px; cursor: pointer; background: #0a0c14; transition: background .12s; }
-.box-row:hover, .box-row.active { background: #13152a; }
 .box-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.box-lbl { font-size: .8rem; color: #ccc; }
+
+/* Grouped (folder) annotation list */
+.anno-title { margin-top: .25rem; }
+.group-list { display: flex; flex-direction: column; gap: .2rem; }
+.group-head {
+  display: flex; align-items: center; gap: .45rem; padding: .35rem .45rem;
+  border-radius: 6px; cursor: pointer; background: #0a0c14; transition: background .12s;
+}
+.group-head:hover { background: #15182c; }
+.group-head.open { background: #13162a; }
+.group-caret { font-size: .7rem; color: #667; width: .7rem; flex-shrink: 0; }
+.group-lbl { font-size: .82rem; color: #d3d6e6; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-count { font-size: .7rem; color: #7a7f9c; background: #1f2338; padding: .05rem .4rem; border-radius: 9px; flex-shrink: 0; }
+.group-items { display: flex; flex-direction: column; gap: .1rem; margin: .12rem 0 .25rem 1.1rem; padding-left: .4rem; border-left: 1px solid #1f2338; }
+.item-row {
+  display: flex; align-items: center; gap: .5rem; padding: .26rem .45rem;
+  border-radius: 5px; cursor: pointer; transition: background .12s;
+}
+.item-row:hover { background: #15182c; }
+.item-row.active { background: #1c2140; box-shadow: inset 2px 0 0 #5c6bc0; }
+.item-idx { font-size: .72rem; color: #8a90b0; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.item-meta { font-size: .74rem; color: #6a7090; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Inline edit block above the list */
+.edit-block { background: #0d1018; border: 1px solid #232846; border-radius: 9px; padding: .7rem; margin-bottom: .6rem; display: flex; flex-direction: column; gap: .4rem; }
+.edit-block-head { display: flex; align-items: center; justify-content: space-between; }
+.edit-block-head h3 { margin: 0; }
+.btn-close-edit { background: transparent; border: none; color: #667; font-size: .85rem; cursor: pointer; padding: .1rem .35rem; border-radius: 4px; line-height: 1; }
+.btn-close-edit:hover { color: #ccc; background: #1a1d2e; }
+.edit-fields-row { display: flex; gap: .4rem; }
+.edit-fields-row .field-inp { min-width: 0; }
 
 .review-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .1rem; }
 .btn-close-review { background: transparent; border: none; color: #555; font-size: .85rem; cursor: pointer; padding: .1rem .3rem; border-radius: 4px; line-height: 1; }
